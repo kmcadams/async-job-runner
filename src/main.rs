@@ -5,37 +5,46 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tokio::task::JoinHandle;
 use tokio::{self, select, signal};
+use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_target(false)
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .init();
+    tracing::info!("Async job runner starting...");
+
     let mut handles = HashMap::<u32, JoinHandle<()>>::new();
 
     for i in 0..10 {
         let job = Job::new(i, format!("job {}", i));
         let id = job.id;
         let handle = tokio::spawn(async move {
-            println!("Starting Job {}", job.id);
+            tracing::info!("Spawning Job {}", job.id);
             let result = job.execute().await;
-            println!("Finished: {}", result);
+            tracing::debug!("Tokio task finished: {}", result);
         });
 
         handles.insert(id, handle);
     }
 
-    println!("Handles {:?}", handles);
+    tracing::debug!("Handles {:?}", handles);
 
     let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate())
         .expect("Failed to register SIGTERM handler");
 
     select! {
         _ = signal::ctrl_c() => {
-            println!("Received Ctrl+C..cancelling tasks");
+            tracing::warn!("Received Ctrl+C..cancelling tasks");
             for handle in handles.values() {
                 handle.abort();
             }
         }
         _ = sigterm.recv() => {
-            println!("Received SIGTERM");
+            tracing::warn!("Received SIGTERM");
             for handle in handles.values() {
                 handle.abort();
             }
@@ -44,9 +53,9 @@ async fn main() -> Result<()> {
 
     for (id, handle) in handles {
         match handle.await {
-            Ok(_) => println!("Job {} completed before shutdown", id),
-            Err(e) if e.is_cancelled() => println!("Job {} was cancelled", id),
-            Err(e) => println!("Job {} failed: {:?}", id, e),
+            Ok(_) => tracing::info!("Job {} completed before shutdown", id),
+            Err(e) if e.is_cancelled() => tracing::info!("Job {} was cancelled", id),
+            Err(e) => tracing::error!("Job {} failed: {:?}", id, e),
         }
     }
     Ok(())
@@ -62,9 +71,12 @@ impl Job {
     fn new(id: u32, payload: String) -> Job {
         Job { id, payload }
     }
+
+    #[tracing::instrument(skip(self))]
     async fn execute(&self) -> String {
-        println!("Running job {}: {}", self.id, self.payload);
+        tracing::info!(job_id = self.id, "Started executing job");
         tokio::time::sleep(Duration::from_millis(5000)).await;
+        tracing::info!(job_id = self.id, "Finished job");
         format!("Job {} ran for 5000ms", self.id)
     }
 }
@@ -74,9 +86,3 @@ impl Display for Job {
         write!(f, "Job {{ id: {}, payload: {} }}", self.id, self.payload)
     }
 }
-
-//TODO:
-// - Accept new jobs (simulated structs or boxed functions)
-// - Queue them in a bounded async channel
-// - Spawn and track task handles using tokio::spawn
-// - Allow for graceful shutdown (e.g., on Ctrl+C)
