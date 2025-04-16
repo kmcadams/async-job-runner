@@ -2,5 +2,10 @@
 name = "async-job-runner"
 version = "0.1.0"
 edition = "2021"
+authors = ["Kyle McAdams <kyleamcadams@gmail.com>"]
 
 [dependencies]
+anyhow = "1.0.98"
+thiserror = "2.0.12"
+tokio = { version = "1.36", features = ["full"] }
+tracing = "0.1"
